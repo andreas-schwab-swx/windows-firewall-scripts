@@ -103,7 +103,6 @@ Write-Host ""
 Write-Host "5. SECURITY ASSESSMENT" -ForegroundColor Yellow
 
 $score = 0
-$maxScore = 100
 
 # SMB completely disabled (30 points)
 if ($smbPorts.Count -eq 0) { $score += 30 }
