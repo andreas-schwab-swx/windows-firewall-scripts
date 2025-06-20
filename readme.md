@@ -1,19 +1,19 @@
 # Windows Firewall Scripts
 
-This repository contains PowerShell scripts to harden a Windows PC by blocking or disabling as many unnecessary internet services as possible. The goal is to minimize the system's attack surface on the internet.
+This repository provides PowerShell scripts to harden a Windows PC by blocking or disabling as many unnecessary internet services as possible. The goal is to minimize the system's attack surface on the internet.
 
-The script assumes that tailscale is already installed on the system and that you are accessing the Windows PC via RDP over the tailscale connection. 
+These scripts are designed for systems where Tailscale is already installed and remote access is performed via RDP over the Tailscale network.
 
 ## File Overview
 
 - **firewall-configuration.ps1**
-  - Configures the Windows Firewall in a restrictive way. Only necessary rules are enabled; all other connections are blocked. The only allowed connections are tailscale and RDP over the tailscale connection.
+  - Applies a restrictive Windows Firewall configuration. Only essential rules are enabled; all other inbound connections are blocked. By default, only Tailscale and RDP over Tailscale are allowed.
 
 - **firewall-restore.ps1**
-  - Restores the default Windows Firewall configuration and enables critical Windows services. Useful if you want to revert the restrictive settings.
+  - Restores the default Windows Firewall configuration and re-enables critical Windows services. Use this script to revert the restrictive settings if needed.
 
 - **firewall-verification.ps1**
-  - Checks the current firewall configuration and critical services. The script verifies that only allowed rules are active, critical ports are blocked, and dangerous Windows services are disabled. At the end, a security assessment is displayed.
+  - Verifies the current firewall configuration and the status of critical services. The script checks that only the intended rules are active, critical ports are blocked, and potentially dangerous Windows services are disabled. A security assessment is displayed at the end.
 
 ## Usage
 
@@ -22,9 +22,9 @@ The script assumes that tailscale is already installed on the system and that yo
 2. **Verification:**
    - After a reboot, run `firewall-verification.ps1` to check the security status.
 3. **Restore:**
-   - If needed, run `firewall-restore.ps1` to restore the default configuration.
+   - If needed, run `firewall-restore.ps1` to restore the default configuration and services.
 
 **Note:**
 All scripts must be executed with administrative privileges.
 
-Copyright by softworx by andreas schwab under the GNU ...
+Copyright © softworx by Andreas Schwab. Licensed under the GNU General Public License (GPL).
