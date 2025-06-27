@@ -1,60 +1,42 @@
-# Windows Firewall Security Configuration (Language-Independent)
-# Run all commands as Administrator!
+# Windows Maximum Security - Tailscale + RDP only
+# Run as Administrator
 
-# 0. REMOVE ALL EXISTING INBOUND RULES
-Get-NetFirewallRule -Direction Inbound | Remove-NetFirewallRule
+# Remove all rules & set strict defaults
+Get-NetFirewallRule | Remove-NetFirewallRule
+Set-NetFirewallProfile -All -Enabled True -DefaultInboundAction Block -DefaultOutboundAction Block
 
-# 1. SET ONLY DESIRED INBOUND RULES
-# Allow RDP via Tailscale only
-New-NetFirewallRule -DisplayName "RDP via Tailscale Only" -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress "100.64.0.0/10" -Action Allow -Profile Any
-# Block RDP from all other sources
-New-NetFirewallRule -DisplayName "Block RDP Internet Only" -Direction Inbound -Protocol TCP -LocalPort 3389 -Action Block -Profile Any
-# Allow Tailscale process (if present)
-$tailscalePath = "C:\\Program Files\\Tailscale\\tailscaled.exe"
-if (Test-Path $tailscalePath) {
-    New-NetFirewallRule -DisplayName "Tailscale-Process" -Direction Inbound -Program $tailscalePath -Action Allow
+# Essential system
+New-NetFirewallRule -DisplayName "Loopback" -Direction Inbound -InterfaceAlias "Loopback*" -Action Allow
+New-NetFirewallRule -DisplayName "DHCP" -Direction Inbound -Protocol UDP -LocalPort 68 -Action Allow
+New-NetFirewallRule -DisplayName "DNS-Out" -Direction Outbound -Protocol UDP -RemoteAddress "1.1.1.1","1.0.0.1" -RemotePort 53 -Action Allow
+
+# Tailscale
+$ts = @("${env:ProgramFiles}\Tailscale\tailscaled.exe","${env:ProgramFiles(x86)}\Tailscale\tailscaled.exe") | Where-Object {Test-Path $_} | Select-Object -First 1
+if ($ts) { New-NetFirewallRule -DisplayName "Tailscale" -Program $ts -Action Allow }
+New-NetFirewallRule -DisplayName "Tailscale-Net" -RemoteAddress "100.64.0.0/10" -Action Allow
+New-NetFirewallRule -DisplayName "Tailscale-Coord" -Direction Outbound -Protocol TCP -RemoteAddress "20.189.173.2" -RemotePort 443 -Action Allow
+
+# RDP (only from Tailscale network)
+New-NetFirewallRule -DisplayName "RDP-Tailscale-Only" -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress "100.64.0.0/10" -Action Allow
+
+# Windows Update
+New-NetFirewallRule -DisplayName "WinUpdate" -Direction Outbound -Protocol TCP -RemoteAddress "13.107.42.14","40.119.211.203" -RemotePort 80,443 -Action Allow
+
+# Disable dangerous services
+'LanmanServer','SSDPSRV','upnphost','WMPNetworkSvc','XboxNetApiSvc','DsSvc','CDPSvc','DiagTrack','RemoteRegistry','SharedAccess' | ForEach-Object {
+    Stop-Service $_ -Force -EA 0; Set-Service $_ -StartupType Disabled -EA 0
 }
 
-# 2. DEFAULT: BLOCK ALL INBOUND, ALLOW ALL OUTBOUND
-Set-NetFirewallProfile -Profile Domain,Public,Private -DefaultInboundAction Block -DefaultOutboundAction Allow
-
-# 3. DISABLE DANGEROUS WINDOWS SERVICES (by ServiceName, not DisplayName)
-$dangerousServices = @(
-    'LanmanServer',   # Server (SMB)
-    'WMPNetworkSvc',  # Windows Media Player Network Sharing
-    'XboxNetApiSvc',  # Xbox Live Networking
-    'DsSvc',          # Data Sharing Service
-    'CDPSvc'          # Connected Devices Platform Service
-)
-foreach ($svc in $dangerousServices) {
-    if (Get-Service -Name $svc -ErrorAction SilentlyContinue) {
-        Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
-        Set-Service -Name $svc -StartupType Disabled
-    }
+# Block dangerous ports (TCP and UDP separately)
+135,139,445,1900,5357 | ForEach-Object {
+    New-NetFirewallRule -DisplayName "Block-$_-TCP" -Direction Inbound -Protocol TCP -LocalPort $_ -Action Block
+    New-NetFirewallRule -DisplayName "Block-$_-UDP" -Direction Inbound -Protocol UDP -LocalPort $_ -Action Block
 }
 
-# 4. DISABLE SMB AND NETBIOS VIA REGISTRY
-Set-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters" -Name "SMB1" -Value 0 -Force
-Set-ItemProperty -Path "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\LanmanServer\\Parameters" -Name "SMB2" -Value 0 -Force
+# Disable SMB
+Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "SMB1" -Value 0 -Force -EA 0
+Disable-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol" -NoRestart -EA 0
+Disable-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol-Client" -NoRestart -EA 0
+Disable-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol-Server" -NoRestart -EA 0
 
-$adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object {$_.IPEnabled -eq $true}
-foreach ($adapter in $adapters) {
-    $adapter.SetTcpipNetbios(2) | Out-Null
-}
-
-Disable-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol" -NoRestart
-Disable-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol-Client" -NoRestart
-Disable-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol-Server" -NoRestart
-
-# 5. DISABLE WSD/SSDP SERVICES (by ServiceName)
-$wsdServices = @('SSDPSRV', 'upnphost', 'WSDSvc', 'WSDPrintDevice')
-foreach ($svc in $wsdServices) {
-    $regPath = "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\$svc"
-    if (Test-Path $regPath) {
-        Set-ItemProperty -Path $regPath -Name "Start" -Value 4 -Force
-    }
-}
-# Block WSD/SSDP ports
-New-NetFirewallRule -DisplayName "Block WSD/SSDP" -Direction Inbound -Protocol UDP -LocalPort 5357 -Action Block
-
-Write-Host "Firewall hardened for Tailscale-only RDP. All other inbound connections blocked." -ForegroundColor Green
+Write-Host "Hardening complete - Only Tailscale + RDP allowed" -ForegroundColor Green

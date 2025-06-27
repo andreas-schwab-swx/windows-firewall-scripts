@@ -1,0 +1,170 @@
+ .\firewall-configuration-3.ps1
+=== WINDOWS SECURITY HARDENING ===
+Starting security configuration...
+Errors will be displayed for transparency and debugging.
+
+1. DISABLING DANGEROUS FIREWALL RULES
+Disabling dangerous rule groups:
+  Disabling Network Discovery: 22 rules
+Get-NetFirewallRule: C:\Users\andreas\Documents\windows-firewall-scripts\firewall-configuration-3.ps1:26
+Line |
+  26 |  …    $rules = Get-NetFirewallRule -Group $group.ID -Enabled True -Actio …
+     |                ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | No matching MSFT_NetFirewallRule objects found by CIM query for instances of the
+     | root/standardcimv2/MSFT_NetFirewallRule class on the  CIM server: SELECT * FROM MSFT_NetFirewallRule  WHERE
+     | ((RuleGroup LIKE '@FirewallAPI.dll,-28502')) AND ((Enabled = 1)) AND ((Action = 2)). Verify query parameters and
+     | retry.
+  File and Printer Sharing: Already disabled
+  Disabling Remote Assistance: 11 rules
+Disabling dangerous port rules:
+  Disabling 1 dangerous port rules
+Disabling keyword-based dangerous rules:
+  Disabling 46 keyword-based rules
+
+2. CONFIGURING RDP FOR TAILSCALE ONLY
+Disabling dangerous RDP rules:
+  Disabling 2 dangerous RDP rules
+Creating RDP Tailscale-only rule:
+
+Name                          : {f1bf7993-a9b7-4786-bbaf-46925d070488}
+DisplayName                   : RDP-Tailscale-Only
+Description                   :
+DisplayGroup                  :
+Group                         :
+Enabled                       : True
+Profile                       : Any
+Platform                      : {}
+Direction                     : Inbound
+Action                        : Allow
+EdgeTraversalPolicy           : Block
+LooseSourceMapping            : False
+LocalOnlyMapping              : False
+Owner                         :
+PrimaryStatus                 : OK
+Status                        : The rule was parsed successfully from the store. (65536)
+EnforcementStatus             : NotApplicable
+PolicyStoreSource             : PersistentStore
+PolicyStoreSourceType         : Local
+RemoteDynamicKeywordAddresses : {}
+PolicyAppId                   :
+PackageFamilyName             :
+
+  ✓ Created RDP Tailscale-only rule
+Creating RDP block rule:
+Name                          : {d9be19b8-692a-4b3b-9fb4-414b9304d7f1}
+DisplayName                   : RDP-Block-Internet
+Description                   :
+DisplayGroup                  :
+Group                         :
+Enabled                       : True
+Profile                       : Any
+Platform                      : {}
+Direction                     : Inbound
+Action                        : Block
+EdgeTraversalPolicy           : Block
+LooseSourceMapping            : False
+LocalOnlyMapping              : False
+Owner                         :
+PrimaryStatus                 : OK
+Status                        : The rule was parsed successfully from the store. (65536)
+EnforcementStatus             : NotApplicable
+PolicyStoreSource             : PersistentStore
+PolicyStoreSourceType         : Local
+RemoteDynamicKeywordAddresses : {}
+PolicyAppId                   :
+PackageFamilyName             :
+
+  ✓ Created RDP block rule
+Configuring Tailscale process rule:
+Name                          : {a739f9fb-1ae8-470c-85cd-d42d50632984}
+DisplayName                   : Tailscale-Process
+Description                   :
+DisplayGroup                  :
+Group                         :
+Enabled                       : True
+Profile                       : Any
+Platform                      : {}
+Direction                     : Inbound
+Action                        : Allow
+EdgeTraversalPolicy           : Block
+LooseSourceMapping            : False
+LocalOnlyMapping              : False
+Owner                         :
+PrimaryStatus                 : OK
+Status                        : The rule was parsed successfully from the store. (65536)
+EnforcementStatus             : NotApplicable
+PolicyStoreSource             : PersistentStore
+PolicyStoreSourceType         : Local
+RemoteDynamicKeywordAddresses : {}
+PolicyAppId                   :
+PackageFamilyName             :
+
+  ✓ Created Tailscale process rule (C:\Program Files\Tailscale\tailscaled.exe)
+
+3. DISABLING DANGEROUS SERVICES
+Service configuration:
+  File and Printer Sharing: Already stopped/disabled
+  Windows Media Player Network: Already stopped/disabled
+  Xbox Live Networking: Already stopped/disabled
+  Data Sharing Service: Already stopped/disabled
+  Connected Devices Platform: Already stopped/disabled
+
+4. DISABLING SMB AND NETBIOS
+SMB configuration:
+  SMB1: Already disabled
+  SMB2: Already disabled
+NetBIOS configuration:
+InvalidOperation: C:\Users\andreas\Documents\windows-firewall-scripts\firewall-configuration-3.ps1:219
+Line |
+ 219 |          $adapter.SetTcpipNetbios(2) | Out-Null
+     |          ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+     | Method invocation failed because
+     | [Deserialized.System.Management.ManagementObject#root\cimv2\Win32_NetworkAdapterConfiguration] does not contain
+     | a method named 'SetTcpipNetbios'.
+  ✓ NetBIOS over TCP/IP disabled on 1 adapter(s)
+SMB Windows Features:
+  SMB1Protocol: Already disabled
+  SMB1Protocol-Client: Already disabled
+  SMB1Protocol-Server: Already disabled
+
+5. DISABLING WSD/SSDP SERVICES
+WSD/SSDP service configuration:
+  SSDP Discovery: Already disabled
+  UPnP Device Host: Already disabled
+  WSD Service: Not installed
+  WSD Print Device: Not installed
+WSD/SSDP block rule:
+Name                          : {3ef2d9c9-5265-4e01-a4c1-429e7a454293}
+DisplayName                   : Block-WSD-SSDP
+Description                   :
+DisplayGroup                  :
+Group                         :
+Enabled                       : True
+Profile                       : Any
+Platform                      : {}
+Direction                     : Inbound
+Action                        : Block
+EdgeTraversalPolicy           : Block
+LooseSourceMapping            : False
+LocalOnlyMapping              : False
+Owner                         :
+PrimaryStatus                 : OK
+Status                        : The rule was parsed successfully from the store. (65536)
+EnforcementStatus             : NotApplicable
+PolicyStoreSource             : PersistentStore
+PolicyStoreSourceType         : Local
+RemoteDynamicKeywordAddresses : {}
+PolicyAppId                   :
+PackageFamilyName             :
+
+  ✓ Created WSD/SSDP block rule
+
+6. HARDENING SUMMARY
+Configuration completed!
+Total changes made: 87
+Total errors encountered: 0
+
+IMPORTANT: System restart recommended to apply all changes.
+Run the analysis script again after restart to verify configuration.
+
+Press any key to restart the computer...
