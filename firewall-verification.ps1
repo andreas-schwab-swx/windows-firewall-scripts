@@ -1,142 +1,211 @@
-# Windows Firewall Security Configuration Verification
-# Run after restart
+# Windows Security Analysis - External Security Focus
+# Checks what matters: services, firewall rules, and external accessibility
 
-Write-Host "Windows Firewall Security Configuration - Verification" -ForegroundColor Green
+Write-Host "=== SECURITY ANALYSIS - EXTERNAL FOCUS ===" -ForegroundColor Green
 Write-Host "Date: $(Get-Date)" -ForegroundColor Gray
 Write-Host ""
 
-# 1. CHECK ACTIVE FIREWALL RULES
-Write-Host "1. ACTIVE FIREWALL RULES" -ForegroundColor Yellow
-Write-Host "Only these rules should be active:" -ForegroundColor Cyan
+$issues = @()
+$strengths = @()
 
-$allowRules = Get-NetFirewallRule -Direction Inbound -Enabled True | Where-Object {$_.Action -eq "Allow"} | Select-Object DisplayName | Sort-Object DisplayName
+# 1. CRITICAL SERVICES STATUS
+Write-Host "1. CRITICAL SERVICES STATUS" -ForegroundColor Yellow
 
-$kernelRules = $allowRules | Where-Object {$_.DisplayName -like "*Kernnetzwerk*"}
-$tailscaleRules = $allowRules | Where-Object {$_.DisplayName -like "*Tailscale*" -or $_.DisplayName -like "*RDP*"}
-$otherRules = $allowRules | Where-Object {$_.DisplayName -notlike "*Kernnetzwerk*" -and $_.DisplayName -notlike "*Tailscale*" -and $_.DisplayName -notlike "*RDP*" -and $_.DisplayName -notlike "*mDNS*"}
+$criticalServices = @(
+    @{Name="LanmanServer"; Desc="File/Print Sharing"; Critical=$true},
+    @{Name="SSDPSRV"; Desc="SSDP Discovery"; Critical=$true},
+    @{Name="upnphost"; Desc="UPnP Device Host"; Critical=$true},
+    @{Name="WMPNetworkSvc"; Desc="Media Player Network"; Critical=$false},
+    @{Name="XboxNetApiSvc"; Desc="Xbox Live Network"; Critical=$false},
+    @{Name="CDPSvc"; Desc="Connected Devices"; Critical=$false},
+    @{Name="RemoteRegistry"; Desc="Remote Registry"; Critical=$true},
+    @{Name="SharedAccess"; Desc="Internet Sharing"; Critical=$false}
+)
 
-Write-Host "Core Network Rules: $($kernelRules.Count)" -ForegroundColor Green
-Write-Host "Tailscale/RDP Rules: $($tailscaleRules.Count)" -ForegroundColor Green  
-Write-Host "Other Rules: $($otherRules.Count)" -ForegroundColor $(if($otherRules.Count -gt 5) {"Red"} else {"Yellow"})
-
-if ($otherRules.Count -gt 5) {
-    Write-Host "WARNING: Too many other rules active!" -ForegroundColor Red
-    $otherRules | Format-Table -AutoSize
+Write-Host "Service Security Status:" -ForegroundColor Cyan
+foreach ($svc in $criticalServices) {
+    $service = Get-Service -Name $svc.Name -EA 0
+    if ($service) {
+        $isSecure = ($service.Status -eq "Stopped" -and $service.StartType -eq "Disabled")
+        $color = if ($isSecure) { "Green" } elseif ($svc.Critical) { "Red" } else { "Yellow" }
+        $status = if ($isSecure) { "✓ SECURE" } else { "✗ RUNNING" }
+        
+        Write-Host "  $($svc.Desc): $status ($($service.Status)/$($service.StartType))" -ForegroundColor $color
+        
+        if ($isSecure) {
+            $strengths += "$($svc.Desc) is properly disabled"
+        } else {
+            if ($svc.Critical) {
+                $issues += "Disable critical service: $($svc.Desc)"
+            } else {
+                $issues += "Consider disabling: $($svc.Desc)"
+            }
+        }
+    } else {
+        Write-Host "  $($svc.Desc): ✓ NOT INSTALLED" -ForegroundColor Green
+        $strengths += "$($svc.Desc) is not installed"
+    }
 }
 
 Write-Host ""
 
-# 2. CHECK CRITICAL PORTS
-Write-Host "2. CRITICAL PORTS CHECK" -ForegroundColor Yellow
+# 2. FIREWALL RULES ANALYSIS
+Write-Host "2. FIREWALL RULES ANALYSIS" -ForegroundColor Yellow
 
-$criticalPorts = Get-NetTCPConnection -State Listen | Where-Object {$_.LocalPort -in @(445,139,135,3389,5357)}
+# Check firewall status
+$profiles = Get-NetFirewallProfile
+Write-Host "Firewall Profile Status:" -ForegroundColor Cyan
+foreach ($profile in $profiles) {
+    $status = if ($profile.Enabled -and $profile.DefaultInboundAction -eq "Block") { "✓ SECURE" } else { "✗ INSECURE" }
+    $color = if ($profile.Enabled -and $profile.DefaultInboundAction -eq "Block") { "Green" } else { "Red" }
+    Write-Host "  $($profile.Name): $status (Enabled: $($profile.Enabled), Default: $($profile.DefaultInboundAction))" -ForegroundColor $color
+}
 
-Write-Host "Listening critical ports:" -ForegroundColor Cyan
-$portAnalysis = $criticalPorts | Select-Object LocalAddress, LocalPort, @{Name='Process';Expression={(Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName}} | Sort-Object LocalPort
+# Active inbound rules
+$inboundRules = Get-NetFirewallRule -Direction Inbound -Enabled True
+Write-Host "`nActive Inbound Rules: $($inboundRules.Count)" -ForegroundColor Cyan
 
-$portAnalysis | Format-Table -AutoSize
+if ($inboundRules.Count -eq 0) {
+    Write-Host "  ⚠ WARNING: No inbound rules - system might be unreachable!" -ForegroundColor Yellow
+    $issues += "No active inbound firewall rules found"
+} elseif ($inboundRules.Count -le 5) {
+    Write-Host "  ✓ GOOD: Minimal rule set" -ForegroundColor Green
+    $strengths += "Minimal firewall rule set ($($inboundRules.Count) rules)"
+} else {
+    Write-Host "  ⚠ REVIEW: Many rules active ($($inboundRules.Count))" -ForegroundColor Yellow
+    $issues += "Many firewall rules active - review needed"
+}
 
-# Port-specific analysis
-$smbPorts = $criticalPorts | Where-Object {$_.LocalPort -eq 445}
-$netbiosPorts = $criticalPorts | Where-Object {$_.LocalPort -eq 139}
-$rpcPorts = $criticalPorts | Where-Object {$_.LocalPort -eq 135}
-$rdpPorts = $criticalPorts | Where-Object {$_.LocalPort -eq 3389}
-$wsdPorts = $criticalPorts | Where-Object {$_.LocalPort -eq 5357}
-
-Write-Host "Port Status:" -ForegroundColor Cyan
-Write-Host "Port 445 (SMB): $(if($smbPorts.Count -eq 0) {"BLOCKED"} else {"DANGEROUS - $($smbPorts.Count) listening"})" -ForegroundColor $(if($smbPorts.Count -eq 0) {"Green"} else {"Red"})
-Write-Host "Port 139 (NetBIOS): $($netbiosPorts.Count) listening" -ForegroundColor $(if($netbiosPorts.Count -le 1) {"Green"} else {"Yellow"})
-Write-Host "Port 135 (RPC): $($rpcPorts.Count) listening" -ForegroundColor Yellow
-Write-Host "Port 3389 (RDP): $($rdpPorts.Count) listening" -ForegroundColor $(if($rdpPorts.Count -le 2) {"Green"} else {"Yellow"})
-Write-Host "Port 5357 (WSD): $(if($wsdPorts.Count -eq 0) {"BLOCKED"} else {"$($wsdPorts.Count) listening"})" -ForegroundColor $(if($wsdPorts.Count -eq 0) {"Green"} else {"Yellow"})
+Write-Host "`nActive Inbound Rules Details:" -ForegroundColor Cyan
+foreach ($rule in $inboundRules) {
+    $portFilter = $rule | Get-NetFirewallPortFilter -EA 0
+    $addressFilter = $rule | Get-NetFirewallAddressFilter -EA 0
+    
+    $port = if ($portFilter -and $portFilter.LocalPort) { $portFilter.LocalPort } else { "Any" }
+    $address = if ($addressFilter -and $addressFilter.RemoteAddress) { $addressFilter.RemoteAddress } else { "Any" }
+    
+    # Analyze rule security
+    $ruleStatus = "✓"
+    $ruleColor = "Green"
+    
+    if ($address -eq "Any" -and $port -ne "Any") {
+        $ruleStatus = "⚠"
+        $ruleColor = "Yellow"
+    }
+    
+    Write-Host "  $ruleStatus $($rule.DisplayName) | Port: $port | From: $address | Action: $($rule.Action)" -ForegroundColor $ruleColor
+}
 
 Write-Host ""
 
 # 3. TAILSCALE CONFIGURATION
 Write-Host "3. TAILSCALE CONFIGURATION" -ForegroundColor Yellow
 
-$tailscaleIPs = Get-NetIPAddress | Where-Object {$_.InterfaceAlias -like "*Tailscale*"} | Select-Object IPAddress, InterfaceAlias
+# Check Tailscale installation
+$tailscalePaths = @("${env:ProgramFiles}\Tailscale\tailscaled.exe", "${env:ProgramFiles(x86)}\Tailscale\tailscaled.exe")
+$tailscalePath = $tailscalePaths | Where-Object {Test-Path $_} | Select-Object -First 1
 
-if ($tailscaleIPs) {
-    Write-Host "Tailscale interfaces found:" -ForegroundColor Green
-    $tailscaleIPs | Format-Table -AutoSize
+if ($tailscalePath) {
+    Write-Host "✓ Tailscale Installation: Found ($tailscalePath)" -ForegroundColor Green
+    $strengths += "Tailscale is installed"
     
-    # Check if NetBIOS only runs over Tailscale
-    $tailscaleIP4 = ($tailscaleIPs | Where-Object {$_.IPAddress -match "100\."}).IPAddress
-    $netbiosOnTailscale = $netbiosPorts | Where-Object {$_.LocalAddress -eq $tailscaleIP4}
-    
-    if ($netbiosOnTailscale) {
-        Write-Host "NetBIOS correctly running only over Tailscale: $tailscaleIP4" -ForegroundColor Green
-    }
-} else {
-    Write-Host "ERROR: No Tailscale interfaces found!" -ForegroundColor Red
-}
-
-Write-Host ""
-
-# 4. WINDOWS SERVICES STATUS
-Write-Host "4. CRITICAL WINDOWS SERVICES" -ForegroundColor Yellow
-
-$services = @(
-    @{Name="LanmanServer"; DisplayName="SMB Server"},
-    @{Name="WMPNetworkSvc"; DisplayName="Windows Media Player Network"},
-    @{Name="XboxNetApiSvc"; DisplayName="Xbox Live Network"},
-    @{Name="CDPSvc"; DisplayName="Proximity Sharing"},
-    @{Name="SSDPSRV"; DisplayName="SSDP Discovery"},
-    @{Name="upnphost"; DisplayName="UPnP Host"}
-)
-
-foreach ($svc in $services) {
-    $service = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
-    if ($service) {
-        $status = if ($service.Status -eq "Stopped" -and $service.StartType -eq "Disabled") {"SECURE"} else {"DANGEROUS"}
-        $color = if ($status -eq "SECURE") {"Green"} else {"Red"}
-        Write-Host "$($svc.DisplayName): $status ($($service.Status)/$($service.StartType))" -ForegroundColor $color
+    # Check Tailscale network interface
+    $tailscaleIPs = Get-NetIPAddress | Where-Object {$_.IPAddress -match "^100\." -and $_.AddressFamily -eq "IPv4"}
+    if ($tailscaleIPs) {
+        Write-Host "✓ Tailscale Network: Active" -ForegroundColor Green
+        $tailscaleIPs | ForEach-Object {
+            Write-Host "  Tailscale IP: $($_.IPAddress) on $($_.InterfaceAlias)" -ForegroundColor Gray
+        }
+        $strengths += "Tailscale network is active"
     } else {
-        Write-Host "$($svc.DisplayName): Not found" -ForegroundColor Gray
+        Write-Host "⚠ Tailscale Network: Not active" -ForegroundColor Yellow
+        $issues += "Tailscale network interface not found"
+    }
+    
+    # Check for Tailscale-specific firewall rules
+    $tailscaleRules = $inboundRules | Where-Object {
+        $addressFilter = $_ | Get-NetFirewallAddressFilter -EA 0
+        $addressFilter -and $addressFilter.RemoteAddress -match "100\.64\."
+    }
+    
+    if ($tailscaleRules) {
+        Write-Host "✓ Tailscale Firewall Rules: $($tailscaleRules.Count) found" -ForegroundColor Green
+        $strengths += "Tailscale-specific firewall rules configured"
+    } else {
+        Write-Host "⚠ Tailscale Firewall Rules: None found" -ForegroundColor Yellow
+        $issues += "No Tailscale-specific firewall rules found"
+    }
+} else {
+    Write-Host "✗ Tailscale Installation: Not found" -ForegroundColor Red
+    $issues += "Tailscale is not installed"
+}
+
+Write-Host ""
+
+# 4. SMB CONFIGURATION
+Write-Host "4. SMB CONFIGURATION" -ForegroundColor Yellow
+
+$smb1Setting = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "SMB1" -EA 0
+$smb2Setting = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "SMB2" -EA 0
+
+Write-Host "SMB Protocol Status:" -ForegroundColor Cyan
+if ($smb1Setting -and $smb1Setting.SMB1 -eq 0) {
+    Write-Host "  ✓ SMB1: Disabled" -ForegroundColor Green
+    $strengths += "SMB1 is disabled"
+} else {
+    Write-Host "  ✗ SMB1: Enabled or not configured" -ForegroundColor Red
+    $issues += "SMB1 should be disabled"
+}
+
+if ($smb2Setting -and $smb2Setting.SMB2 -eq 0) {
+    Write-Host "  ✓ SMB2: Disabled" -ForegroundColor Green
+    $strengths += "SMB2 is disabled"
+} else {
+    Write-Host "  ⚠ SMB2: Enabled or not configured" -ForegroundColor Yellow
+    $issues += "Consider disabling SMB2 if not needed"
+}
+
+Write-Host ""
+
+# 5. EXTERNAL ACCESSIBILITY NOTICE
+Write-Host "5. EXTERNAL ACCESSIBILITY" -ForegroundColor Yellow
+Write-Host "External Port Scan Recommendation:" -ForegroundColor Cyan
+Write-Host "  Run from external network: nmap -Pn [your-public-ip]" -ForegroundColor Gray
+Write-Host "  Expected result: All ports filtered/closed" -ForegroundColor Gray
+Write-Host "  ✓ SECURE: 'filtered tcp ports (no-response)'" -ForegroundColor Green
+Write-Host "  ✗ DANGER: Any 'open' ports found" -ForegroundColor Red
+
+Write-Host ""
+
+# 6. SECURITY SUMMARY
+Write-Host "6. SECURITY SUMMARY" -ForegroundColor Yellow
+
+Write-Host "`nSECURITY STRENGTHS:" -ForegroundColor Green
+if ($strengths.Count -eq 0) {
+    Write-Host "  No security strengths identified" -ForegroundColor Gray
+} else {
+    for ($i = 0; $i -lt $strengths.Count; $i++) {
+        Write-Host "  ✓ $($strengths[$i])" -ForegroundColor Green
     }
 }
 
-Write-Host ""
-
-# 5. SECURITY ASSESSMENT
-Write-Host "5. SECURITY ASSESSMENT" -ForegroundColor Yellow
-
-$score = 0
-
-# SMB completely disabled (30 points)
-if ($smbPorts.Count -eq 0) { $score += 30 }
-
-# NetBIOS only over Tailscale (20 points)
-if ($netbiosPorts.Count -le 1) { $score += 20 }
-
-# RDP rules correct (20 points)
-$rdpRules = $tailscaleRules | Where-Object {$_.DisplayName -like "*RDP*"}
-if ($rdpRules.Count -ge 1) { $score += 20 }
-
-# Dangerous services disabled (15 points)
-$stoppedServices = 0
-foreach ($svc in $services) {
-    $service = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
-    if ($service -and $service.Status -eq "Stopped") { $stoppedServices++ }
-}
-$score += [math]::Round(($stoppedServices / $services.Count) * 15)
-
-# Few active rules (15 points)
-if ($otherRules.Count -le 5) { $score += 15 }
-
-$scoreColor = if ($score -ge 80) {"Green"} elseif ($score -ge 60) {"Yellow"} else {"Red"}
-$scoreText = if ($score -ge 80) {"SECURE"} elseif ($score -ge 60) {"ACCEPTABLE"} else {"INSECURE"}
-
-Write-Host "SECURITY SCORE: $score/100 - $scoreText" -ForegroundColor $scoreColor
-
-if ($score -ge 80) {
-    Write-Host "System is well configured for Tailscale-only RDP!" -ForegroundColor Green
-} elseif ($score -ge 60) {
-    Write-Host "System is basically secure, but improvements possible." -ForegroundColor Yellow
+Write-Host "`nSECURITY ISSUES:" -ForegroundColor Red
+if ($issues.Count -eq 0) {
+    Write-Host "  ✓ No security issues found - excellent!" -ForegroundColor Green
 } else {
-    Write-Host "System requires additional security measures!" -ForegroundColor Red
+    for ($i = 0; $i -lt $issues.Count; $i++) {
+        Write-Host "  ✗ $($issues[$i])" -ForegroundColor Red
+    }
 }
 
-Write-Host ""
-Write-Host "VERIFICATION COMPLETED" -ForegroundColor Green
+# Calculate security score
+$totalChecks = $issues.Count + $strengths.Count
+$securityScore = if ($totalChecks -gt 0) { [math]::Round(($strengths.Count / $totalChecks) * 100) } else { 0 }
+$scoreColor = if ($securityScore -ge 90) { "Green" } elseif ($securityScore -ge 70) { "Yellow" } else { "Red" }
+
+Write-Host "`nSECURITY SCORE: $securityScore% ($($strengths.Count)/$totalChecks checks passed)" -ForegroundColor $scoreColor
+
+$status = if ($securityScore -ge 90) { "EXCELLENT" } elseif ($securityScore -ge 70) { "GOOD" } else { "NEEDS IMPROVEMENT" }
+Write-Host "OVERALL STATUS: $status" -ForegroundColor $scoreColor
+
+Write-Host "`n=== ANALYSIS COMPLETED ===" -ForegroundColor Green

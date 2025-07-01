@@ -1,64 +1,41 @@
-# Windows Firewall Security Configuration for Tailscale-only RDP
-# Run all commands as Administrator!
+# Windows Security Hardening - Minimal & Effective
+# Run as Administrator
 
-# 1. DISABLE DANGEROUS FIREWALL RULES
-Disable-NetFirewallRule -DisplayGroup "Netzwerkerkennung"
-Disable-NetFirewallRule -DisplayGroup "Datei- und Druckerfreigabe"
-Disable-NetFirewallRule -DisplayGroup "Remoteunterstützung"
-Disable-NetFirewallRule -DisplayName "*Wiedergabe auf Gerät*"
-Disable-NetFirewallRule -DisplayName "*Wi-Fi Direct*"
-Disable-NetFirewallRule -DisplayName "*WFD*"
-Disable-NetFirewallRule -DisplayName "*drahtlos*"
-Disable-NetFirewallRule -DisplayName "*AllJoyn*"
-Disable-NetFirewallRule -DisplayName "*DIAL*"
-Disable-NetFirewallRule -DisplayName "*verbundene Geräte*"
-Disable-NetFirewallRule -DisplayName "*Übermittlungsoptimierung*"
+Write-Host "Windows Security Hardening - Tailscale RDP Only" -ForegroundColor Green
 
-# 2. CONFIGURE RDP FOR TAILSCALE ONLY
-New-NetFirewallRule -DisplayName "RDP via Tailscale Only" -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress "100.64.0.0/10" -Action Allow
-New-NetFirewallRule -DisplayName "Block RDP Internet Only" -Direction Inbound -Protocol TCP -LocalPort 3389 -InterfaceType RemoteAccess -Action Block
-New-NetFirewallRule -DisplayName "Tailscale-Process" -Direction Inbound -Program "C:\Program Files\Tailscale\tailscaled.exe" -Action Allow
+# 1. Check Tailscale
+Write-Host "Checking Tailscale..." -ForegroundColor Yellow
+$tailscale = @("${env:ProgramFiles}\Tailscale\tailscaled.exe","${env:ProgramFiles(x86)}\Tailscale\tailscaled.exe") | Where-Object {Test-Path $_} | Select-Object -First 1
+if (!$tailscale) {
+    Write-Host "ERROR: Tailscale not found! Install first." -ForegroundColor Red
+    exit 1
+}
+Write-Host "✓ Tailscale found: $tailscale" -ForegroundColor Green
 
-# 3. DISABLE DANGEROUS WINDOWS SERVICES
-Stop-Service -Name "LanmanServer" -Force
-Set-Service -Name "LanmanServer" -StartupType Disabled
-Stop-Service -Name "WMPNetworkSvc" -Force
-Set-Service -Name "WMPNetworkSvc" -StartupType Disabled
-Stop-Service -Name "XboxNetApiSvc" -Force
-Set-Service -Name "XboxNetApiSvc" -StartupType Disabled
-Set-Service -Name "DsSvc" -StartupType Disabled
-Stop-Service -Name "CDPSvc" -Force
-Set-Service -Name "CDPSvc" -StartupType Disabled
-
-# 4. DISABLE SMB AND NETBIOS VIA REGISTRY
-Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "SMB1" -Value 0 -Force
-Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "SMB2" -Value 0 -Force
-
-$adapters = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object {$_.IPEnabled -eq $true}
-foreach ($adapter in $adapters) {
-    $adapter.SetTcpipNetbios(2)
+# 2. Stop critical services
+Write-Host "Stopping critical services..." -ForegroundColor Yellow
+'LanmanServer','SSDPSRV','upnphost' | ForEach-Object {
+    Stop-Service $_ -Force -EA 0
+    Set-Service $_ -StartupType Disabled -EA 0
+    Write-Host "✓ Disabled $_" -ForegroundColor Green
 }
 
-Disable-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol" -NoRestart
-Disable-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol-Client" -NoRestart
-Disable-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol-Server" -NoRestart
+# 3. Disable SMB
+Write-Host "Disabling SMB..." -ForegroundColor Yellow
+Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "SMB1" -Value 0 -Force -EA 0
+Set-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\LanmanServer\Parameters" -Name "SMB2" -Value 0 -Force -EA 0
+Disable-WindowsOptionalFeature -Online -FeatureName "SMB1Protocol" -NoRestart -EA 0
+Write-Host "✓ SMB disabled" -ForegroundColor Green
 
-# 5. DISABLE WSD/SSDP SERVICES
-if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\SSDPSRV") {
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\SSDPSRV" -Name "Start" -Value 4 -Force
-}
-if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\upnphost") {
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\upnphost" -Name "Start" -Value 4 -Force
-}
-if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\WSDSvc") {
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\WSDSvc" -Name "Start" -Value 4 -Force
-}
-if (Test-Path "HKLM:\SYSTEM\CurrentControlSet\Services\WSDPrintDevice") {
-    Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\WSDPrintDevice" -Name "Start" -Value 4 -Force
-}
-New-NetFirewallRule -DisplayName "Block WSD/SSDP" -Direction Inbound -Protocol UDP -LocalPort 5357 -Action Block
+# 4. Configure Firewall
+Write-Host "Configuring firewall..." -ForegroundColor Yellow
+Get-NetFirewallRule | Remove-NetFirewallRule
+New-NetFirewallRule -DisplayName "RDP-Tailscale-Only" -Direction Inbound -Protocol TCP -LocalPort 3389 -RemoteAddress "100.64.0.0/10" -Action Allow
+New-NetFirewallRule -DisplayName "System-Loopback" -Direction Inbound -InterfaceAlias "Loopback*" -Action Allow
+Set-NetFirewallProfile -All -DefaultInboundAction Block -DefaultOutboundAction Allow
+Write-Host "✓ Firewall configured" -ForegroundColor Green
 
-Write-Host "Configuration completed." -ForegroundColor Green
-Write-Host "Press any key to restart the computer..." -ForegroundColor Yellow
-$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-Restart-Computer -Force
+# 5. Restart prompt
+Write-Host "`nHardening completed! Press 'q' to quit, any other key to restart..." -ForegroundColor Cyan
+$key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown").Character
+if ($key -ne 'q') { Restart-Computer -Force }
